@@ -10,6 +10,8 @@ Rozwiązania zadań rekrutacyjnych do podprojektu Autonomy (Formula Student).
 4. [Zadanie 1 – testy i dowód poprawności](#zadanie-1--testy-i-dowód-poprawności)
 5. [Zadanie 1 – znane ograniczenia](#zadanie-1--znane-ograniczenia)
 6. [Zadanie 2.1 – analiza czujników](#zadanie-21--analiza-czujników)
+7. [Zadanie 2.2 – estymacja pozycji](#zadanie-22--estymacja-pozycji)
+8. [Zadanie 2.2 – testy i wizualizacja](#zadanie-22--testy-i-wizualizacja)
 
 ---
 
@@ -77,6 +79,13 @@ g++ zadanie2_2.cpp -o zadanie2_2
 
 Program po starcie czeka na liczbę `T` z zakresu `0.000 – 33.000` wpisywaną w terminalu
 (po jednej w linii) i wypisuje pozycję auta w formacie `x y`. Zakończenie: `Ctrl+D`.
+
+### Zadanie 2.2 Testy (python)
+```bash
+pip install matplotlib numpy pandas
+python3 visualize.py
+```
+Skrypt automatycznie kompiluje program C++, przesyła do niego gęstą siatkę czasową (krok co 20 ms / 0.02 s) i generuje wykres porównawczy.
 
 ---
 
@@ -196,4 +205,44 @@ skrętu albo na całkowaniu przyspieszeń z IMU. W obu przypadkach błąd się k
 **Wniosek ogólny:** czujniki mają rózne wady (ale dane z nich się uzupełniają) – sensor 1 jest gęsty i gładki, ale dryfuje, sensor 2 jest rzadki i zaszumiony, ale „trzyma” globalną pozycję.
 
 
-## Zadanie 2.2
+## Zadanie 2.2 - estymacja pozycji
+Aplikacja w zadanie2_2.cpp realizuje fuzję danych z obu sensorów w celu wyznaczenia ciągłej, rzeczywistej trajektorii pojazdu oraz estymacji pozycji (x,y) dla dowolnej chwili czasowej T od 0 do 33s
+
+### Koncepcja i algorytm
+
+1. **Korekta osi Y:** Podczas wczytywania `sensor2.csv` współrzędne y są mnożone przez -1, aby uzgodnić układy współrzędnych obu czujników.
+2. **Model błędu (Dryf kursu (t)):** Zakładam, że Sensor 1 bardzo dokładnie mierzy odległości (długości wektorów przesunięć), ale jego głównym błędem jest powoli narastający błąd w czasie. Każdy mały krok z Sensora 1 jest obracany o kąt (t) za pomocą macierzy rotacji:
+   $$x_{\text{new}} = x_{\text{prev}} + \Delta x \cos(\psi) + \Delta y \sin(\psi)$$
+   $$y_{\text{new}} = y_{\text{prev}} - \Delta x \sin(\psi) + \Delta y \cos(\psi)$$
+3. **Parametryzacja i interpolacja kątów (`ANGLE_STEP = 2.0`):** Kąt korekty $\psi$ jest wyznaczany w punktach węzłowych co 2 sekundy, a pomiędzy nimi interpolowany liniowo. Zapewnia to gładkość funkcji błędu i uniemożliwia powstanie szumu o wysokiej częstotliwości.
+4. **Nieliniowa optymalizacja:**
+   * Wyliczany jest numeryczny Jakobian (wpływ zmiany każdego kąta na pozycję).
+   * Tworzony i rozwiązywany jest układ równań normalnych $(J^T J + \lambda I) \Delta = -g$ przy użyciu własnej implementacji **eliminacji Gaussa z częściowym wyborem elementu głównego** (`solveLinear`).
+   * Funkcja kosztu uwzględnia błąd dopasowania do GPS (MSE), karę za poszarpanie wykresu kątów (`SMOOTHING = 0.09`) oraz sztywną kotwicę na starcie trasy (`START_WEIGHT = 20.0`, wymuszającą $\psi(0) = 0$).
+5. **Iteracyjne odrzucanie outlierów:** Optymalizacja wykonywana jest w 3 rundach. Po każdej rundzie mierzona jest odległość dopasowanej trasy od punktów GPS. Punkty oddalone o więcej niż `1.0 m` (`OUTLIER_DIST`) są oznaczane jako szpilki/outliery (`use[i] = false`) i ignorowane w kolejnych przebiegach.
+6. **Estymacja pozycji w chwili $T$:** Po wyznaczeniu ostatecznej, gładkiej ścieżki program odpowiada na zapytania użytkownika ze standardowego wejścia, wyznaczając pozycję $(x, y)$ za pomocą interpolacji liniowej (`interpolate`).
+
+
+### Wybór algorytmu, dobór hiperparametrów i refleksje
+
+- **Analiza problemu vs. algorytm:** Samodzielnie przeanalizowałem zachowanie obu czujników i zidentyfikowałem ich cechy (dryf kursu w Sensorze 1, zaszumienie i odwróconą oś Y w Sensorze 2) oraz zaproponowałem koncepcję fizycznego "odkręcania" błędu. Jednak przez to ze sam algorytm (Levenberg-Marquardt z wygładzaniem) ma charakter nieliniowy to nie wiedziałem jak go dokładnie rozwiązać i oprogramować, więc skorzystałem z internetu, i wzorowałem się na podobnych algorytmach dostosowując do konkretnego problemu jaki miałem rozwiązać
+- **Ręczny dobór hiperparametrów:** Kluczowe parametry modelu (`ANGLE_STEP = 2.0`, `SMOOTHING = 0.09`, `OUTLIER_DIST = 1.0`, `START_WEIGHT = 20.0`) zostały dobrane iteracyjnie – poprzez modyfikowanie wartości i analizę wizualną oraz numeryczną uzyskiwanych trajektorii.
+- **Liczba rund czyszczenia (3 pętle):** Liczba 3 rund filtrowania outlierów została ustalona eksperymentalnie. Po 3. przejściu zestaw punktów stabilizuje się i dalsze iteracje nie przynoszą już zauważalnej poprawy jakości wyznaczonej ścieżki.
+
+---
+
+## Zadanie 2.2 – testy i wizualizacja
+
+Do weryfikacji poprawnego działania algorytmu powstał skrypt w Pythonie `visualize.py`.
+
+### Przebieg testu:
+1. Skrypt automatycznie kompiluje program `zadanie2_2.cpp`.
+2. Generuje gęstą siatkę czasową z wąskim krokiem **20 ms** ($0.02\text{ s}$) od $0.000\text{ s}$ do $33.000\text{ s}$ (łącznie 1651 zapytań).
+3. Przesyła punkty czasowe strumieniem `stdin` do skompilowanego programu C++ i odbiera odpowiadające im pozycje $(x, y)$.
+4. Rysuje zbiorczy wykres porównawczy w `matplotlib` i zapisuje go do pliku `fuzja_sensorow_wykres.png`.
+
+### Wynik wizualny testu:
+* **Surowy Sensor 1 (czerwona przerywana linia):** Pokazuje płynny ruch, który jednak drastycznie odjeżdża od właściwego toru z powodu skumulowanego dryfu.
+* **Surowy Sensor 2 (niebieskie punkty):** Pokazuje rzadkie, zaszumione pomiary GPS oraz wyraźne szpilki/outliery.
+* **Estymowana trajektoria C++ (zielona ciągła linia):** Idealnie prostuje dryf Sensora 1, zachowuje pełną płynność ruchu przy gęstym próbkowaniu (20 ms) oraz całkowicie ignoruje odrzucone szpilki GPS.
+
