@@ -36,7 +36,7 @@ double distance_squared(Point a, Point b)
 // oraz po ktrej stronie prostej się znajduje punkt P (+ / -)
 double cross_prod_signed(Point A, Point B, Point P)
 {
-    return  (B.x - A.x) * (A.y - P.y) - (A.x - P.x) * (B.y - A.y);
+    return (B.x - A.x) * (P.y - A.y) - (B.y - A.y) * (P.x - A.x);
 }
 
 // DFS - przeszukuje graf w głąb - znajduje pachołki które należą do tej samej grupy (leżą blisko siebie)
@@ -82,14 +82,16 @@ bool load_file(const string& filename, vector<Point>& points, int& n, double& m,
     return true;
 }
 
+// Budowanie listy sąsiedztwa za pomocą siatki (sprawdzam tylko sąsiadujące kratki o bokach m)
 vector<vector<int>> build_adjacency_list(const vector<Point>& points, double m)
 {
     int n = points.size();
     map<pair<int, int>, vector<int>> grid;
     double cell_size = (m > 0) ? m : 1.0;
     vector<vector<int>> adj_list(n);
-    double m_squared = m*m + 1e-9;
+    double m_squared = m*m + 1e-9; //margines na błąd double
 
+    // Przypisanie pachołkow do odpowiedniej kratki na siatce
     for (int i = 0; i < n; i++)
     {
         int cell_x = floor(points[i].x / cell_size);
@@ -98,6 +100,7 @@ vector<vector<int>> build_adjacency_list(const vector<Point>& points, double m)
     }
 
 
+    // Dla każdego punktu sprawdzam tylko sąsiadów z kratek wokół (3x3 wokół punktu)
     for(int i = 0; i < n; i++)
     {
         int cell_x = floor(points[i].x / cell_size);
@@ -113,6 +116,7 @@ vector<vector<int>> build_adjacency_list(const vector<Point>& points, double m)
                 {
                     for(int j : neighbors->second)
                     {
+                        // i < j zabezpiecza przed dodaniem krawedzi 2 razy
                         if(i < j && distance_squared(points[i], points[j]) <= m_squared)
                         {
                             adj_list[i].push_back(j);
@@ -196,11 +200,10 @@ void print_new_cones(const vector<NewPoint>& new_points)
 }
 
 // rekurencyjna funkcja ktra buduje otoczke znajdując najdalsze punkty od lini międyz 2 punktami ktre są w jakiejś płaszczyznie najdalej wysunięte
-
 void find_outliers_rec(Point A, Point B, const vector<Point>& points, vector<Point>& cone_loop)
 {
     int max_idx = -1;
-    double max_distance = 0.0;
+    double max_distance = 1e-9;
 
     // Wyszukiwanie punktu najdalszego od prostej AB
     for(size_t i = 0; i < points.size(); i++)
@@ -246,13 +249,30 @@ void print_cones_loop(const vector<Point>filtered_map)
 {
     if (filtered_map.empty()) return;
 
+    if (filtered_map.size() == 1)
+    {
+        cout << "ENCLOSURE 0.000 [" << filtered_map[0].id << "]" << '\n';
+        return;
+    }
+
     //Znajduje najbardziej wysunięte punkty na współrzednej X (na + i -)
     int min_x_idx = 0;
     int max_x_idx = 0;
     for(size_t i = 1; i < filtered_map.size(); i++)
     {
-        (filtered_map[i].x > filtered_map[max_x_idx].x) && (max_x_idx = i);
-        (filtered_map[i].x < filtered_map[min_x_idx].x) && (min_x_idx = i);
+        // Szukam min X, jak remis biore min Y
+        if (filtered_map[i].x < filtered_map[min_x_idx].x || 
+            (filtered_map[i].x == filtered_map[min_x_idx].x && filtered_map[i].y < filtered_map[min_x_idx].y))
+        {
+            min_x_idx = i;
+        }
+
+        // Szukam max X, jak remis biore max Y
+        if (filtered_map[i].x > filtered_map[max_x_idx].x || 
+            (filtered_map[i].x == filtered_map[max_x_idx].x && filtered_map[i].y > filtered_map[max_x_idx].y))
+        {
+            max_x_idx = i;
+        }
     }
 
     Point A = filtered_map[min_x_idx];
